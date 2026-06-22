@@ -27,7 +27,8 @@ from backend.nfo_handler import (
     NfoStatus, analyze_nfo, find_nfo_for_strm, inject_mediainfo, inject_mock_mediainfo_to_nfo
 )
 from backend.ffprobe_runner import probe_with_retry
-from backend.file_browser import get_strm_files_in_path
+from backend import file_browser as fb
+from backend.file_browser import entries_from_cache, update_file_cache_entry
 
 logger = logging.getLogger("nfo-injector")
 
@@ -318,40 +319,50 @@ class TaskManager:
                       f"▶ 任务开始 | 库: {lib.name or lib.id} | 路径: {task.relative_path} | 范围: {task.scope} | "
                       f"并发: {task.concurrency} | 超时: {task.timeout}s")
 
-            # 收集 STRM 文件（在线程池中执行，避免阻塞事件循环）
+            # 收集待处理文件：优先复用扫描缓存，命中则跳过 NFO 重读
             recursive = task.scope == "recursive"
-            strm_files = await asyncio.get_event_loop().run_in_executor(
-                self._executor,
-                get_strm_files_in_path,
-                abs_target,
-                config.exclude_dirs,
-                recursive,
-            )
+            ttl = config.scan_cache_ttl
+            subtree_key = task.relative_path  # "<lib_id>" 或 "<lib_id>/..."
+            cached_entries = entries_from_cache(subtree_key, ttl) if ttl > 0 else None
+
+            if cached_entries is not None:
+                self._log(task, "info", f"复用扫描缓存（{len(cached_entries)} 文件），跳过重扫")
+                filter_statuses = {NfoStatus(s) for s in task.filter_status} if task.filter_status else None
+                pending = []
+                for e in cached_entries:
+                    if filter_statuses and e.status not in filter_statuses:
+                        if not task.force:
+                            continue
+                    pending.append((e.strm_path, e.nfo_path, e.detail))
+            else:
+                self._log(task, "info", "缓存未命中/过期，重新扫描 NFO")
+                strm_files = await asyncio.get_event_loop().run_in_executor(
+                    self._executor,
+                    fb.get_strm_files_in_path,  # 经模块属性调用以支持测试 spy
+                    abs_target,
+                    config.exclude_dirs,
+                    recursive,
+                )
+                if task._cancel_async.is_set():
+                    raise asyncio.CancelledError()
+                if not strm_files:
+                    self._log(task, "warning", "未找到任何 STRM 文件")
+                    task.status = TaskStatus.COMPLETED
+                    return
+                self._log(task, "info", f"扫描完成，共 {len(strm_files)} 个 STRM 文件")
+                filter_statuses = {NfoStatus(s) for s in task.filter_status} if task.filter_status else None
+                pending = await asyncio.get_event_loop().run_in_executor(
+                    self._executor,
+                    self._filter_strm_files,
+                    strm_files,
+                    filter_statuses,
+                    task.force,
+                )
 
             if task._cancel_async.is_set():
                 raise asyncio.CancelledError()
 
-            if not strm_files:
-                self._log(task, "warning", "未找到任何 STRM 文件")
-                task.status = TaskStatus.COMPLETED
-                return
-
-            self._log(task, "info", f"扫描完成，共 {len(strm_files)} 个 STRM 文件")
-
-            # 按状态过滤（在线程池中批量检查 NFO）
-            filter_statuses = {NfoStatus(s) for s in task.filter_status} if task.filter_status else None
-            pending = await asyncio.get_event_loop().run_in_executor(
-                self._executor,
-                self._filter_strm_files,
-                strm_files,
-                filter_statuses,
-                task.force,
-            )
-
-            if task._cancel_async.is_set():
-                raise asyncio.CancelledError()
-
-            skipped_by_filter = len(strm_files) - len(pending)
+            skipped_by_filter = (len(strm_files) - len(pending)) if (cached_entries is None) else 0
             if skipped_by_filter > 0:
                 self._log(task, "info",
                           f"状态过滤: 跳过 {skipped_by_filter} 个（不符合过滤条件 {task.filter_status}）")
@@ -440,6 +451,16 @@ class TaskManager:
             pending.append((sf, nfo_path, detail))
         return pending
 
+    @staticmethod
+    def _refresh_cache_after_inject(config: AppConfig, strm_path: Path):
+        """注入成功后翻新该文件缓存条目（lib_strm_path 用于算 key）。"""
+        lib = resolve_library(strm_path, config)
+        if lib:
+            try:
+                update_file_cache_entry(lib.id, strm_path, Path(lib.strm_path))
+            except Exception:
+                pass  # 翻新失败不影响任务
+
     # ─── 单文件处理 ──────────────────────────────────────────
 
     async def _process_strm_file(self, task, config, strm_path, nfo_path, detail):
@@ -489,6 +510,7 @@ class TaskManager:
             if inject_result["success"]:
                 self._log(task, "success", f"   ✓ {inject_result['message']}")
                 task.progress.success += 1
+                self._refresh_cache_after_inject(config, strm_path)
             elif inject_result.get("skipped"):
                 self._log(task, "info", f"   → {inject_result['message']}")
                 task.progress.skipped += 1
@@ -552,6 +574,7 @@ class TaskManager:
         if inject_result["success"]:
             self._log(task, "success", f"   ✓ {inject_result['message']}")
             task.progress.success += 1
+            self._refresh_cache_after_inject(config, strm_path)
         elif inject_result.get("skipped"):
             self._log(task, "info", f"   → {inject_result['message']}")
             task.progress.skipped += 1
