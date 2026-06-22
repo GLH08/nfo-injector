@@ -40,6 +40,8 @@ class AppConfig(BaseModel):
     retry_delay: float = Field(default=2.0, ge=0.5, le=30.0, description="超时重试等待秒数")
     forbidden_retry_delay: float = Field(default=5.0, ge=1.0, le=60.0, description="403 重试等待秒数")
 
+    scan_cache_ttl: float = Field(default=600, ge=0, description="扫描缓存有效期（秒），0 表示不缓存")
+
     exclude_dirs: List[str] = Field(
         default=["trailers", "extrafanart", "behind the scenes", "featurettes"],
         description="扫描时忽略的目录名（不区分大小写）"

@@ -84,6 +84,7 @@ class ConfigUpdate(BaseModel):
     max_retries: Optional[int] = None
     retry_delay: Optional[float] = None
     forbidden_retry_delay: Optional[float] = None
+    scan_cache_ttl: Optional[float] = None
     exclude_dirs: Optional[List[str]] = None
 
 

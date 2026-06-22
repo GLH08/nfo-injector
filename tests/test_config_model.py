@@ -26,3 +26,8 @@ def test_old_fields_removed():
     assert "strm_root" not in fields
     assert "media_root" not in fields
     assert "path_mappings" not in fields
+
+
+def test_scan_cache_ttl_default():
+    c = AppConfig()
+    assert c.scan_cache_ttl == 600
