@@ -219,6 +219,24 @@ def entries_from_cache(subtree_key: str, ttl: float) -> Optional[List[ScanEntry]
     return snapshot
 
 
+def update_file_cache_entry(
+    lib_id: str,
+    strm_abs: Path,
+    lib_strm_path: Path,
+) -> None:
+    """注入成功后重读该单文件 NFO，翻新缓存条目（幂等）。"""
+    nfo_path = find_nfo_for_strm(strm_abs)
+    detail = analyze_nfo(nfo_path)
+    key = _cache_key(lib_id, strm_abs, lib_strm_path)
+    with _LOCK:
+        _FILE_CACHE[key] = ScanEntry(
+            strm_path=strm_abs,
+            nfo_path=nfo_path,
+            status=detail.status,
+            detail=detail,
+        )
+
+
 def browse_directory(
     abs_dir: Path,
     lib_id: str,

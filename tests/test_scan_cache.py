@@ -1,8 +1,9 @@
 import time as _time
 from pathlib import Path
 from backend import file_browser as fb
-from backend.file_browser import scan_and_cache, clear_scan_cache, counts_from_cache, entries_from_cache
+from backend.file_browser import scan_and_cache, clear_scan_cache, counts_from_cache, entries_from_cache, update_file_cache_entry
 from backend.nfo_handler import NfoStatus
+import backend.nfo_handler as nfoh
 
 
 def _make_lib(tmp_path):
@@ -84,3 +85,30 @@ def test_entries_from_cache_returns_list(tmp_path):
     assert len(entries) == 2
     paths = {e.strm_path.name for e in entries}
     assert paths == {"ep01.strm", "s02.strm"}
+
+
+def test_update_file_cache_entry_refreshes_status(tmp_path):
+    clear_scan_cache()
+    root = _make_lib(tmp_path)
+    scan_and_cache(root / "TV", "lib1", root, ["trailers"])
+    key = "lib1/TV/Show1/Season01/ep01.strm"
+    assert fb._FILE_CACHE[key].status == NfoStatus.EMPTY
+    # 模拟注入：把 nfo 写成带完整 streamdetails 的健康 NFO
+    healthy_nfo = """<movie>
+      <fileinfo>
+        <streamdetails>
+          <video><codec>h264</codec><width>1920</width><height>1080</height><framerate>24</framerate><duration>3600</duration></video>
+        </streamdetails>
+      </fileinfo>
+    </movie>"""
+    (root / "TV" / "Show1" / "Season01" / "ep01.nfo").write_text(healthy_nfo, encoding="utf-8")
+    update_file_cache_entry("lib1", root / "TV" / "Show1" / "Season01" / "ep01.strm", root)
+    assert fb._FILE_CACHE[key].status == NfoStatus.HEALTHY
+
+
+def test_update_file_cache_entry_idempotent_when_key_absent(tmp_path):
+    clear_scan_cache()
+    root = _make_lib(tmp_path)
+    # 未扫描，key 不存在 → 调用后写入，不报错
+    update_file_cache_entry("lib1", root / "TV" / "Show1" / "Season01" / "ep01.strm", root)
+    assert "lib1/TV/Show1/Season01/ep01.strm" in fb._FILE_CACHE
