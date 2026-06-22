@@ -1,0 +1,19 @@
+services:
+  nfo-injector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nfo-injector
+    ports:
+      - "18880:18880"
+    volumes:
+      # Single parent mount covering all STRM + Media sources
+      - /apps:/apps
+      # Persist configuration and logs
+      - ./data:/app/data
+    environment:
+      # Only for seeding initial library when config.json doesn't exist
+      - STRM_ROOT=/apps/moviepilot/115strm/Emby
+      - MEDIA_ROOT=/apps/clouddrive2/CloudDrive/115open/Media
+      - TZ=Asia/Shanghai
+    restart: unless-stopped

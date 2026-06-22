@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NFO MediaInfo 注入管理器</title>
+  <meta name="description" content="为 Emby STRM 媒体库精确注入 FFprobe MediaInfo 信息，支持批量操作与实时进度监控" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── 顶栏 ──────────────────────────────────────────────── -->
+  <header class="topbar" id="topbar">
+    <div class="topbar-left">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">NFO Injector</span>
+      </div>
+      <div class="global-stats" id="globalStats">
+        <div class="stat-badge" title="健康"><span id="statHealthy">0 ✅</span></div>
+        <div class="stat-badge" title="不完整"><span id="statPartial">0 ⚠️</span></div>
+        <div class="stat-badge" title="空白"><span id="statEmpty">0 🔴</span></div>
+        <div class="stat-badge" title="缺失"><span id="statMissing">0 ⚫</span></div>
+      </div>
+      <div class="top-legend" style="font-size: 11px; color: var(--text-muted); margin-right: 16px;">
+        (✅健康 ⚠️不完整 🔴空白 ⚫缺失)
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-ghost" id="btnRefreshRoot" title="刷新根目录统计">
+        <span class="icon">↻</span> 刷新统计
+      </button>
+      <button class="btn btn-primary" id="btnConfig">
+        <span class="icon">⚙</span> 配置
+      </button>
+    </div>
+  </header>
+
+  <!-- ── 主体三栏 ───────────────────────────────────────────── -->
+  <main class="main-layout">
+
+    <!-- 左栏：目录树 -->
+    <aside class="panel panel-tree" id="panelTree">
+      <div class="panel-header">
+        <span class="panel-title">📁 目录树</span>
+        <div class="panel-actions">
+          <button class="btn-icon" id="btnCollapseAll" title="全部折叠">⊟</button>
+          <button class="btn-icon" id="btnScanAll" title="全量扫描状态">⊕</button>
+        </div>
+      </div>
+      <div class="tree-search">
+        <input type="text" id="treeSearch" placeholder="搜索文件名…" autocomplete="off" />
+      </div>
+      <div class="tree-container" id="treeContainer">
+        <div class="loading-placeholder">
+          <div class="spinner"></div>
+          <span>加载目录树…</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 中栏：文件详情 -->
+    <section class="panel panel-detail" id="panelDetail">
+      <div id="detailEmpty" class="detail-empty">
+        <div class="detail-empty-icon">📋</div>
+        <p>选择左侧的 STRM 文件</p>
+        <p class="hint">查看 NFO 状态与 MediaInfo 详情</p>
+      </div>
+      <div id="detailContent" class="detail-content" style="display:none">
+        <!-- 文件头 -->
+        <div class="detail-header">
+          <div class="detail-file-name" id="detailFileName"></div>
+          <div class="detail-file-path" id="detailFilePath"></div>
+          <div class="detail-status-badge" id="detailStatusBadge"></div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="detail-actions" id="detailActions">
+          <button class="btn btn-secondary" id="btnProbeOnly">
+            <span class="icon">🔍</span> 仅探测
+          </button>
+          <button class="btn btn-primary" id="btnInjectFile">
+            <span class="icon">💉</span> 注入
+          </button>
+          <button class="btn btn-danger" id="btnForceInject">
+            <span class="icon">⚡</span> 强制覆盖
+          </button>
+          <button class="btn btn-warning" id="btnMockInjectFile" title="强制写入虚拟MediaInfo(跳过FFprobe探测)" style="background-color:#d97706;color:#fff;">
+            <span class="icon">💊</span> 虚拟注入
+          </button>
+          <button class="btn btn-ghost" id="btnRefreshDetail">
+            <span class="icon">↻</span> 刷新
+          </button>
+        </div>
+
+        <!-- MediaInfo 详情 -->
+        <div class="detail-section" id="sectionMediaInfo">
+          <div class="section-title">MediaInfo 详情</div>
+          <div id="mediaInfoContent"></div>
+        </div>
+
+        <!-- NFO XML 查看器 -->
+        <div class="detail-section" id="sectionNfoXml">
+          <div class="section-title">
+            NFO 原始内容
+            <button class="btn-icon-sm" id="btnCopyXml" title="复制">⎘</button>
+          </div>
+          <pre class="xml-viewer" id="xmlViewer"></pre>
+        </div>
+
+        <!-- FFprobe 原始输出 -->
+        <div class="detail-section" id="sectionProbeResult" style="display:none">
+          <div class="section-title">
+            FFprobe 原始数据
+            <button class="btn-icon-sm" id="btnCopyProbe" title="复制">⎘</button>
+          </div>
+          <pre class="json-viewer" id="probeViewer"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右栏：任务面板 -->
+    <aside class="panel panel-tasks" id="panelTasks">
+      <div class="panel-header">
+        <span class="panel-title">⚡ 任务</span>
+        <div class="panel-actions">
+          <button class="btn-icon" id="btnClearHistory" title="清空历史">🗑</button>
+        </div>
+      </div>
+
+      <!-- 活跃任务 -->
+      <div class="tasks-section">
+        <div class="tasks-section-label">活跃任务</div>
+        <div id="activeTasks" class="tasks-list">
+          <div class="tasks-empty">暂无活跃任务</div>
+        </div>
+      </div>
+
+      <!-- 实时日志 -->
+      <div class="tasks-section log-section">
+        <div class="tasks-section-label">
+          实时日志
+          <span id="logConnStatus" class="log-status">─</span>
+          <button class="btn-icon-sm" id="btnClearLog" title="清空日志">✕</button>
+        </div>
+        <div class="log-container" id="logContainer"></div>
+      </div>
+
+      <!-- 历史任务 -->
+      <div class="tasks-section">
+        <div class="tasks-section-label collapsible" id="toggleHistory">
+          历史任务 <span class="collapse-icon">▾</span>
+        </div>
+        <div id="historyTasks" class="tasks-list"></div>
+      </div>
+    </aside>
+  </main>
+
+  <div class="context-menu" id="contextMenu" style="display:none">
+    <div class="ctx-item" id="ctxScanNfo">📋 扫描 NFO 状态（仅读 XML）</div>
+    <div class="ctx-item" id="ctxFindIssues">🔍 查找此目录下问题文件</div>
+    <div class="ctx-item" id="ctxScan">🔄 刷新目录统计徽章</div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item" id="ctxInjectEmpty">🔴 注入 [空白] 状态文件</div>
+    <div class="ctx-item" id="ctxInjectNeedFix">⚠️ 注入 [不完整] 状态文件</div>
+    <div class="ctx-item ctx-danger" id="ctxInjectAll">⚡ 强制全部注入（覆盖所有现有状态）</div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item" id="ctxInjectMockAll" style="color:#d97706;">💊 强制全部虚拟注入 (跳过探测)</div>
+  </div>
+
+  <!-- ── 确认弹窗 ─────────────────────────────────────────────── -->
+  <div class="modal-overlay" id="confirmModal" style="display:none">
+    <div class="modal">
+      <div class="modal-title" id="confirmTitle">确认操作</div>
+      <div class="modal-body" id="confirmBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="confirmCancel">取消</button>
+        <button class="btn btn-danger" id="confirmOk">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 问题文件列表弹窗 ─────────────────────────────────────────────── -->
+  <div class="modal-overlay" id="issuesModal" style="display:none">
+    <div class="modal modal-wide">
+      <div class="modal-title">
+        🔍 问题文件列表 <span id="issuesCount" style="font-size:12px; color:var(--text-muted); margin-left:8px;"></span>
+      </div>
+      <div class="modal-body" style="padding:0;">
+        <div id="issuesList" class="issues-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn ghost" id="issuesClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 配置模态框 ─────────────────────────────────────────────── -->
+  <div class="modal-overlay" id="configModal" style="display:none">
+    <div class="modal modal-wide">
+      <div class="modal-title">⚙ 配置</div>
+      <div class="modal-body rich">
+        <div class="config-tabs">
+          <button class="config-tab active" data-tab="libraries">媒体库</button>
+          <button class="config-tab" data-tab="ffprobe">FFprobe 参数</button>
+        </div>
+
+        <!-- 媒体库列表 -->
+        <div class="config-panel active" id="tabLibraries">
+          <p class="form-hint" style="margin-bottom:12px">
+            每个媒体库 = 一对「STRM 目录 ↔ Media 目录」。路径为容器内绝对路径，且应位于容器挂载的 /apps/ 之下。
+          </p>
+          <div id="librariesList"></div>
+          <button class="btn btn-secondary" id="btnAddLibrary" style="margin-top:8px">
+            + 添加库
+          </button>
+        </div>
+
+        <!-- FFprobe 参数 -->
+        <div class="config-panel" id="tabFfprobe">
+          <div class="form-row">
+            <div class="form-group">
+              <label>超时秒数</label>
+              <input type="number" id="cfgTimeout" min="10" max="600" />
+              <span class="form-hint">单次 FFprobe 最长等待时间，超时后强制 kill 子进程</span>
+            </div>
+            <div class="form-group">
+              <label>最大并发数</label>
+              <input type="number" id="cfgConcurrency" min="1" max="8" />
+              <span class="form-hint">同时进行 FFprobe 的文件数。建议 2-3，过高会触发 115 风控</span>
+            </div>
+            <div class="form-group">
+              <label>最大重试次数</label>
+              <input type="number" id="cfgMaxRetries" min="1" max="10" />
+              <span class="form-hint">超时/403 时的最大重试次数，不含首次</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>超时重试等待（秒）</label>
+              <input type="number" id="cfgRetryDelay" min="0.5" max="30" step="0.5" />
+            </div>
+            <div class="form-group">
+              <label>403 重试等待（秒）</label>
+              <input type="number" id="cfgForbiddenDelay" min="1" max="60" step="0.5" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>盲猜扩展名（逗号分隔，按优先级排序）</label>
+            <input type="text" id="cfgExtensions" placeholder=".mp4,.mkv,.ts" />
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="configCancel">取消</button>
+        <button class="btn btn-primary" id="configSave">保存配置</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
