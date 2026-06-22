@@ -200,7 +200,7 @@ function renderTreeLevel(container, entries, depth, parentPath) {
       children.dataset.loaded = 'false';
 
       // 初始加载该目录的统计徽章 (only for non-library directories)
-      if (!entry.entry_type === 'library' && !scanCache[entry.relative_path]) {
+      if (entry.entry_type !== 'library' && !scanCache[entry.relative_path]) {
         loadDirStats(entry.relative_path, badge);
       }
 
