@@ -251,6 +251,11 @@
             <label>盲猜扩展名（逗号分隔，按优先级排序）</label>
             <input type="text" id="cfgExtensions" placeholder=".mp4,.mkv,.ts" />
           </div>
+          <div class="form-group">
+            <label>扫描缓存有效期(秒)</label>
+            <input type="number" id="cfgScanCacheTtl" min="0" max="86400" step="60" />
+            <span class="form-hint">目录徽章与注入复用的扫描缓存有效期；0=不缓存。建议 600（10分钟）</span>
+          </div>
         </div>
 
       </div>

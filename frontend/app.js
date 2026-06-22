@@ -327,6 +327,8 @@ function filterTree() {
 
 async function refreshGlobalStats() {
   try {
+    // 先清服务端扫描缓存，强制全库重扫
+    await DEL('/api/scan-cache');
     const counts = await GET('/api/scan?path=');
     $('statHealthy').textContent = `${counts.healthy} ✅`;
     $('statPartial').textContent = `${counts.partial} ⚠️`;
@@ -987,6 +989,7 @@ async function openConfigModal() {
     $('cfgRetryDelay').value = config.retry_delay || 2;
     $('cfgForbiddenDelay').value = config.forbidden_retry_delay || 5;
     $('cfgExtensions').value = (config.guess_extensions || []).join(',');
+    $('cfgScanCacheTtl').value = config.scan_cache_ttl ?? 600;
     // exclude_dirs 不在 UI 暴露：后端 PUT 时省略该字段即保留既有默认值
 
     renderLibrariesList(config.libraries || []);
@@ -1006,6 +1009,7 @@ async function saveConfig() {
     retry_delay: parseFloat($('cfgRetryDelay').value),
     forbidden_retry_delay: parseFloat($('cfgForbiddenDelay').value),
     guess_extensions: $('cfgExtensions').value.split(',').map(s => s.trim()).filter(Boolean),
+    scan_cache_ttl: parseFloat($('cfgScanCacheTtl').value),
     // exclude_dirs 故意省略：后端保留既有默认值（不在 UI 暴露）
   };
   try {
