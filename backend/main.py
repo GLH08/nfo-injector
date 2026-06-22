@@ -45,7 +45,7 @@ from backend.nfo_handler import (
 )
 from backend.ffprobe_runner import run_ffprobe_sync
 from backend.file_browser import (
-    browse_directory, scan_directory_recursive, EntryType, StatusCount,
+    browse_directory, EntryType, StatusCount,
 )
 from backend import file_browser
 from backend.task_manager import task_manager, TaskStatus
