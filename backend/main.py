@@ -169,9 +169,10 @@ async def browse(path: str = ""):
 
 
 @app.get("/api/scan")
-async def scan(path: str = ""):
+async def scan(path: str = "", force: bool = False):
     """递归统计路径下各状态数量（用于目录徽章）；path 为空时对所有启用库求和。
-    命中扫描缓存则直接返回，未命中/过期才递归扫描并填充缓存。"""
+    命中扫描缓存则直接返回，未命中/过期才递归扫描并填充缓存。
+    force=True 时绕过缓存查询，强制重扫并刷新缓存（手动刷新用）。"""
     config = get_config()
     ttl = config.scan_cache_ttl
     loop = asyncio.get_event_loop()
@@ -181,7 +182,7 @@ async def scan(path: str = ""):
         for lib in config.libraries:
             if not lib.enabled:
                 continue
-            cached = file_browser.counts_from_cache(lib.id, ttl) if ttl > 0 else None
+            cached = file_browser.counts_from_cache(lib.id, ttl) if (ttl > 0 and not force) else None
             if cached is not None:
                 total.merge(cached)
             else:
@@ -198,7 +199,7 @@ async def scan(path: str = ""):
         raise HTTPException(404, str(e))
 
     subtree_key = path  # path 已是 "<lib_id>" 或 "<lib_id>/..." 形式
-    cached = file_browser.counts_from_cache(subtree_key, ttl) if ttl > 0 else None
+    cached = file_browser.counts_from_cache(subtree_key, ttl) if (ttl > 0 and not force) else None
     if cached is not None:
         return {"path": path, **cached.to_dict()}
     counts = await loop.run_in_executor(

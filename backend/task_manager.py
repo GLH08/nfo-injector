@@ -323,7 +323,7 @@ class TaskManager:
             recursive = task.scope == "recursive"
             ttl = config.scan_cache_ttl
             subtree_key = task.relative_path  # "<lib_id>" 或 "<lib_id>/..."
-            cached_entries = entries_from_cache(subtree_key, ttl) if ttl > 0 else None
+            cached_entries = entries_from_cache(subtree_key, ttl) if (ttl > 0 and task.scope != "file") else None
 
             if cached_entries is not None:
                 self._log(task, "info", f"复用扫描缓存（{len(cached_entries)} 文件），跳过重扫")

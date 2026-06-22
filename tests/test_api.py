@@ -90,3 +90,23 @@ def test_scan_subfolder_after_global_scan_hits_cache(tmp_path):
     r = client.get("/api/scan?path=lib1/Movie")
     assert r.status_code == 200
     assert r.json()["total"] == 1
+
+
+def test_scan_force_bypasses_cache(tmp_path):
+    """force=true 必须绕过缓存重扫，反映磁盘当前状态而非过期缓存。"""
+    root = _setup(tmp_path)
+    fb.clear_scan_cache()
+    client = TestClient(app)
+    # 首次扫描落缓存：empty=1
+    r1 = client.get("/api/scan?path=lib1")
+    assert r1.json()["empty"] == 1
+    # 修改磁盘：删除 NFO → 状态由 EMPTY 变 MISSING
+    (root / "Movie" / "A" / "A.nfo").unlink()
+    # 不带 force：命中过期缓存，仍返回 empty=1
+    r2 = client.get("/api/scan?path=lib1")
+    assert r2.json()["empty"] == 1
+    # 带 force=true：绕过缓存重扫，反映磁盘新状态 missing=1
+    r3 = client.get("/api/scan?path=lib1&force=true")
+    counts = r3.json()
+    assert counts["missing"] == 1
+    assert counts["empty"] == 0

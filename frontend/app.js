@@ -594,7 +594,7 @@ async function scanNfoStatus() {
   showToast(`正在扫描 NFO 状态: ${currentDirCtx}…`, 'info', 2500);
 
   try {
-    const counts = await GET(`/api/scan?path=${encodeURIComponent(currentDirCtx)}`);
+    const counts = await GET(`/api/scan?path=${encodeURIComponent(currentDirCtx)}&force=1`);
 
     // 更新目录徽章缓存
     scanCache[currentDirCtx] = counts;
@@ -672,9 +672,13 @@ async function scanContextDir() {
   hideContextMenu();
   showToast(`扫描目录: ${currentDirCtx}`, 'info', 2000);
   delete scanCache[currentDirCtx];
-  // 刷新该目录的树节点
+  // 手动刷新：强制服务端重扫该子树（绕过扫描缓存），不复用 lazy-load 的 loadDirStats
   const badgeEl = document.querySelector(`.tree-dir-badge[data-dir-path="${currentDirCtx}"]`);
-  if (badgeEl) await loadDirStats(currentDirCtx, badgeEl);
+  try {
+    const counts = await GET(`/api/scan?path=${encodeURIComponent(currentDirCtx)}&force=1`);
+    scanCache[currentDirCtx] = counts;
+    if (badgeEl) renderDirBadge(badgeEl, counts);
+  } catch (e) { /* 静默失败 */ }
 }
 
 async function injectDir(mode) {
