@@ -44,7 +44,10 @@ from backend.nfo_handler import (
     STATUS_LABELS, STATUS_COLORS
 )
 from backend.ffprobe_runner import run_ffprobe_sync
-from backend.file_browser import browse_directory, scan_directory_recursive, EntryType, StatusCount
+from backend.file_browser import (
+    browse_directory, scan_directory_recursive, EntryType, StatusCount,
+)
+from backend import file_browser
 from backend.task_manager import task_manager, TaskStatus
 
 # ─── 应用初始化 ────────────────────────────────────────────────
@@ -167,8 +170,10 @@ async def browse(path: str = ""):
 
 @app.get("/api/scan")
 async def scan(path: str = ""):
-    """递归统计路径下各状态数量（用于目录徽章）；path 为空时对所有启用库求和"""
+    """递归统计路径下各状态数量（用于目录徽章）；path 为空时对所有启用库求和。
+    命中扫描缓存则直接返回，未命中/过期才递归扫描并填充缓存。"""
     config = get_config()
+    ttl = config.scan_cache_ttl
     loop = asyncio.get_event_loop()
 
     if not path:
@@ -176,20 +181,38 @@ async def scan(path: str = ""):
         for lib in config.libraries:
             if not lib.enabled:
                 continue
-            c = await loop.run_in_executor(
-                None, scan_directory_recursive, Path(lib.strm_path), config.exclude_dirs
-            )
-            total.merge(c)
+            cached = file_browser.counts_from_cache(lib.id, ttl) if ttl > 0 else None
+            if cached is not None:
+                total.merge(cached)
+            else:
+                c = await loop.run_in_executor(
+                    None, file_browser.scan_and_cache,
+                    Path(lib.strm_path), lib.id, Path(lib.strm_path), config.exclude_dirs,
+                )
+                total.merge(c)
         return {"path": "", **total.to_dict()}
 
     try:
         lib, abs_dir = split_lib_path(path, config)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+    subtree_key = path  # path 已是 "<lib_id>" 或 "<lib_id>/..." 形式
+    cached = file_browser.counts_from_cache(subtree_key, ttl) if ttl > 0 else None
+    if cached is not None:
+        return {"path": path, **cached.to_dict()}
     counts = await loop.run_in_executor(
-        None, scan_directory_recursive, abs_dir, config.exclude_dirs
+        None, file_browser.scan_and_cache,
+        abs_dir, lib.id, Path(lib.strm_path), config.exclude_dirs,
     )
     return {"path": path, **counts.to_dict()}
+
+
+@app.delete("/api/scan-cache")
+async def invalidate_scan_cache():
+    """全局手动刷新：清空整个扫描缓存。"""
+    file_browser.clear_scan_cache()
+    return {"message": "扫描缓存已清空"}
 
 
 @app.get("/api/issues")
