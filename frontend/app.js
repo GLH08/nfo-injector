@@ -987,7 +987,7 @@ async function openConfigModal() {
     $('cfgRetryDelay').value = config.retry_delay || 2;
     $('cfgForbiddenDelay').value = config.forbidden_retry_delay || 5;
     $('cfgExtensions').value = (config.guess_extensions || []).join(',');
-    $('cfgExcludeDirs').value = (config.exclude_dirs || []).join(',');
+    // exclude_dirs 不在 UI 暴露：后端 PUT 时省略该字段即保留既有默认值
 
     renderLibrariesList(config.libraries || []);
     $('configModal').style.display = 'flex';
@@ -1006,7 +1006,7 @@ async function saveConfig() {
     retry_delay: parseFloat($('cfgRetryDelay').value),
     forbidden_retry_delay: parseFloat($('cfgForbiddenDelay').value),
     guess_extensions: $('cfgExtensions').value.split(',').map(s => s.trim()).filter(Boolean),
-    exclude_dirs: $('cfgExcludeDirs').value.split(',').map(s => s.trim()).filter(Boolean),
+    // exclude_dirs 故意省略：后端保留既有默认值（不在 UI 暴露）
   };
   try {
     config = await PUT('/api/config', payload);
