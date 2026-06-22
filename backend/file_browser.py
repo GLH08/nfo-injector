@@ -8,6 +8,8 @@
 """
 
 import os
+import threading
+import time
 from pathlib import Path
 from typing import List, Optional, Dict
 from dataclasses import dataclass, field
@@ -82,6 +84,91 @@ class BrowseEntry:
     status_summary: Optional[Dict] = None  # StatusCount.to_dict()
 
     has_children: bool = False  # 是否有子目录/STRM 文件
+
+
+# ─── 扫描缓存（进程内）──────────────────────────────────────
+@dataclass
+class ScanEntry:
+    strm_path: Path
+    nfo_path: Optional[Path]
+    status: NfoStatus
+    detail: NfoDetail
+
+# key = "<lib_id>/<库内 posix 相对路径>"
+_FILE_CACHE: Dict[str, ScanEntry] = {}
+# key = "<lib_id>" 或 "<lib_id>/<库内 posix 子树路径>"，value = monotonic 时间戳
+_SCANNED_SUBTREES: Dict[str, float] = {}
+_LOCK = threading.Lock()
+
+
+def _cache_key(lib_id: str, strm_abs: Path, lib_strm_path: Path) -> str:
+    rel = strm_abs.relative_to(lib_strm_path).as_posix()
+    return f"{lib_id}/{rel}"
+
+
+def _subtree_key(lib_id: str, abs_dir: Path, lib_strm_path: Path) -> str:
+    if abs_dir == lib_strm_path:
+        return lib_id
+    rel = abs_dir.relative_to(lib_strm_path).as_posix()
+    return f"{lib_id}/{rel}"
+
+
+def clear_scan_cache() -> None:
+    """清空整个扫描缓存（全局手动刷新用）。"""
+    with _LOCK:
+        _FILE_CACHE.clear()
+        _SCANNED_SUBTREES.clear()
+
+
+def scan_and_cache(
+    abs_dir: Path,
+    lib_id: str,
+    lib_strm_path: Path,
+    exclude_dirs: Optional[List[str]] = None,
+) -> StatusCount:
+    """
+    递归扫描 abs_dir 子树，读取每个 .strm 的 NFO 状态，写入 _FILE_CACHE，
+    更新 _SCANNED_SUBTREES[subtree_key]，清理该子树下已不存在的旧条目，返回计数。
+    """
+    if exclude_dirs is None:
+        exclude_dirs = ["trailers", "extrafanart"]
+    exclude_lower = {d.lower() for d in exclude_dirs}
+
+    counts = StatusCount()
+    if not abs_dir.exists():
+        return counts
+
+    subtree_key = _subtree_key(lib_id, abs_dir, lib_strm_path)
+    subtree_prefix = subtree_key + "/"
+    seen_keys: set = set()
+
+    for root, dirs, files in os.walk(abs_dir):
+        dirs[:] = [d for d in dirs if d.lower() not in exclude_lower]
+        for fname in files:
+            if not fname.lower().endswith(".strm"):
+                continue
+            strm_path = Path(root) / fname
+            nfo_path = find_nfo_for_strm(strm_path)
+            detail = analyze_nfo(nfo_path)
+            counts.add(detail.status)
+            key = _cache_key(lib_id, strm_path, lib_strm_path)
+            seen_keys.add(key)
+            with _LOCK:
+                _FILE_CACHE[key] = ScanEntry(
+                    strm_path=strm_path,
+                    nfo_path=nfo_path,
+                    status=detail.status,
+                    detail=detail,
+                )
+
+    # 清理该子树下本次未触及的旧条目
+    with _LOCK:
+        stale = [k for k in _FILE_CACHE if k.startswith(subtree_prefix) and k not in seen_keys]
+        for k in stale:
+            del _FILE_CACHE[k]
+        _SCANNED_SUBTREES[subtree_key] = time.monotonic()
+
+    return counts
 
 
 def browse_directory(
