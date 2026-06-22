@@ -171,6 +171,54 @@ def scan_and_cache(
     return counts
 
 
+def _find_ancestor_subtree(subtree_key: str, ttl: float) -> Optional[str]:
+    """
+    返回覆盖 subtree_key 且在 TTL 内的祖先（或自身）子树 key；无则 None。
+    命中条件：a == subtree_key 或 subtree_key.startswith(a + "/")，且未过期。
+    选最近（最长匹配）的祖先。
+    """
+    now = time.monotonic()
+    candidates = []
+    with _LOCK:
+        for a, ts in _SCANNED_SUBTREES.items():
+            if a == subtree_key or subtree_key.startswith(a + "/"):
+                if now - ts <= ttl:
+                    candidates.append(a)
+    if not candidates:
+        return None
+    # 最长匹配 = 最具体的祖先
+    return max(candidates, key=len)
+
+
+def counts_from_cache(subtree_key: str, ttl: float) -> Optional[StatusCount]:
+    ancestor = _find_ancestor_subtree(subtree_key, ttl)
+    if ancestor is None:
+        return None
+    counts = StatusCount()
+    prefix = subtree_key + "/"
+    with _LOCK:
+        snapshot = [
+            (k, e) for k, e in _FILE_CACHE.items()
+            if k == subtree_key or k.startswith(prefix)
+        ]
+    for k, e in snapshot:
+        counts.add(e.status)
+    return counts
+
+
+def entries_from_cache(subtree_key: str, ttl: float) -> Optional[List[ScanEntry]]:
+    ancestor = _find_ancestor_subtree(subtree_key, ttl)
+    if ancestor is None:
+        return None
+    prefix = subtree_key + "/"
+    with _LOCK:
+        snapshot = [
+            e for k, e in _FILE_CACHE.items()
+            if k == subtree_key or k.startswith(prefix)
+        ]
+    return snapshot
+
+
 def browse_directory(
     abs_dir: Path,
     lib_id: str,
