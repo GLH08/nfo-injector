@@ -115,6 +115,7 @@ async function init() {
   $('ctxScanNfo').addEventListener('click', () => scanNfoStatus());
   $('ctxFindIssues').addEventListener('click', () => findIssues());
   $('ctxScan').addEventListener('click', () => scanContextDir());
+  $('ctxRefreshMediaIndex').addEventListener('click', refreshMediaIndex);
   $('ctxInjectEmpty').addEventListener('click', () => injectDir('EMPTY'));
   $('ctxInjectNeedFix').addEventListener('click', () => injectDir('PARTIAL'));
   $('ctxInjectAll').addEventListener('click', () => confirmInjectAll());
@@ -681,6 +682,18 @@ async function scanContextDir() {
   } catch (e) { /* 静默失败 */ }
 }
 
+async function refreshMediaIndex() {
+  if (!currentDirCtx) return;
+  hideContextMenu();
+  showToast(`正在刷新媒体文件名索引: ${currentDirCtx}…`, 'info', 2500);
+  try {
+    const res = await POST(`/api/media-index/refresh?path=${encodeURIComponent(currentDirCtx)}`);
+    showToast(`已刷新: 扫描 ${res.scanned} / 索引 ${res.indexed} / 未匹配 ${res.missing}`, 'success', 4000);
+  } catch (e) {
+    showToast('刷新媒体索引失败: ' + e.message, 'error');
+  }
+}
+
 async function injectDir(mode) {
   if (!currentDirCtx) return;
   hideContextMenu();
@@ -1038,14 +1051,14 @@ function switchConfigTab(tab) {
 function renderLibrariesList(libraries) {
   const list = $('librariesList');
   list.innerHTML = '';
-  libraries.forEach(l => addLibraryRow(list, l.name || '', l.strm_path || '', l.media_path || '', l.enabled ?? true, l.id));
+  libraries.forEach(l => addLibraryRow(list, l.name || '', l.strm_path || '', l.media_path || '', l.media_url_root || '', l.enabled ?? true, l.id));
 }
 
 function addLibraryRule() {
-  addLibraryRow($('librariesList'), '', '', '', true);
+  addLibraryRow($('librariesList'), '', '', '', '', true);
 }
 
-function addLibraryRow(container, name, strmPath, mediaPath, enabled, id = '') {
+function addLibraryRow(container, name, strmPath, mediaPath, mediaUrlRoot, enabled, id = '') {
   const row = document.createElement('div');
   row.className = 'mapping-rule library-rule';
   if (id) row.dataset.id = id;
@@ -1053,6 +1066,7 @@ function addLibraryRow(container, name, strmPath, mediaPath, enabled, id = '') {
     <input type="text" placeholder="库名" value="${escapeHtml(name)}" class="library-name" />
     <input type="text" placeholder="STRM 路径（容器内绝对路径）" value="${escapeHtml(strmPath)}" class="library-strm" />
     <input type="text" placeholder="Media 路径（容器内绝对路径）" value="${escapeHtml(mediaPath)}" class="library-media" />
+    <input type="text" placeholder="OpenList URL根(可选, 留空走ffprobe)" value="${escapeHtml(mediaUrlRoot)}" class="library-urlroot" />
     <label class="library-enabled" title="启用" style="padding:0 4px;"><input type="checkbox" ${enabled ? 'checked' : ''} />启用</label>
     <button class="mapping-remove" title="删除">✕</button>
   `;
@@ -1067,6 +1081,7 @@ function collectLibraries() {
       name: row.querySelector('.library-name').value.trim(),
       strm_path: row.querySelector('.library-strm').value.trim(),
       media_path: row.querySelector('.library-media').value.trim(),
+      media_url_root: row.querySelector('.library-urlroot').value.trim(),
       enabled: row.querySelector('.library-enabled input').checked,
     };
     if (id) res.id = id;

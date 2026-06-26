@@ -978,9 +978,9 @@ html, body {
 }
 .mapping-remove:hover { background: var(--danger-dim); }
 
-/* ── 媒体库配置行（5 列：库名 / STRM / Media / 启用 / 删除） ── */
+/* ── 媒体库配置行（6 列：库名 / STRM / Media / URL根 / 启用 / 删除） ── */
 .library-rule {
-  grid-template-columns: 1fr 1.4fr 1.4fr auto auto;
+  grid-template-columns: 1fr 1.4fr 1.4fr 1.4fr auto auto;
 }
 .library-rule .library-name {
   font-family: var(--font-ui);

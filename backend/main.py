@@ -49,6 +49,7 @@ from backend.file_browser import (
 )
 from backend import file_browser
 from backend.task_manager import task_manager, TaskStatus
+from backend.media_index import media_index
 
 # ─── 应用初始化 ────────────────────────────────────────────────
 app = FastAPI(
@@ -214,6 +215,39 @@ async def invalidate_scan_cache():
     """全局手动刷新：清空整个扫描缓存。"""
     file_browser.clear_scan_cache()
     return {"message": "扫描缓存已清空"}
+
+
+# ─── 媒体索引 API ─────────────────────────────────────────────
+
+@app.post("/api/media-index/refresh")
+async def refresh_media_index(path: str = ""):
+    config = get_config()
+    if not path:
+        raise HTTPException(400, "需要 path")
+    try:
+        lib, abs_dir = split_lib_path(path, config)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    # subdir_relative = path 去掉 lib_id/ 前缀
+    parts = path.split("/", 1)
+    subdir = parts[1] if len(parts) > 1 else ""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, media_index.refresh_index,
+        lib.id, Path(lib.strm_path), config.exclude_dirs, config.guess_extensions, subdir
+    )
+    return result
+
+
+@app.get("/api/media-index")
+async def get_media_index(path: str = ""):
+    config = get_config()
+    media_index.load()
+    if not path:
+        return {lib.id: len(media_index._data.get(lib.id, {})) for lib in config.libraries}
+    parts = path.split("/", 1)
+    lib_id = parts[0]
+    return {"count": len(media_index._data.get(lib_id, {}))}
 
 
 @app.get("/api/issues")
