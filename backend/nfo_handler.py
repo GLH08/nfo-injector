@@ -310,8 +310,8 @@ def inject_mediainfo(nfo_path: Path, probe_data: Dict[str, Any], force: bool = F
                 _set_text(v, "codec", stream.get("codec_name"))
                 _set_text(v, "micodec", stream.get("codec_name"))
                 _set_text(v, "bitrate", stream.get("bit_rate"))
-                _set_text(v, "width", str(stream["width"]) if "width" in stream else None)
-                _set_text(v, "height", str(stream["height"]) if "height" in stream else None)
+                _set_text(v, "width", str(stream["width"]) if stream.get("width") is not None else None)
+                _set_text(v, "height", str(stream["height"]) if stream.get("height") is not None else None)
                 _set_text(v, "aspect", stream.get("display_aspect_ratio"))
                 _set_text(v, "aspectratio", stream.get("display_aspect_ratio"))
                 _set_text(v, "framerate", stream.get("r_frame_rate"))
@@ -338,7 +338,7 @@ def inject_mediainfo(nfo_path: Path, probe_data: Dict[str, Any], force: bool = F
                 _set_text(a, "micodec", stream.get("codec_name"))
                 _set_text(a, "bitrate", stream.get("bit_rate"))
                 _set_text(a, "language", stream.get("tags", {}).get("language", "und"))
-                _set_text(a, "channels", str(stream["channels"]) if "channels" in stream else None)
+                _set_text(a, "channels", str(stream["channels"]) if stream.get("channels") is not None else None)
                 _set_text(a, "samplingrate", stream.get("sample_rate"))
                 ET.SubElement(a, "default").text = "True"
                 ET.SubElement(a, "forced").text = "False"

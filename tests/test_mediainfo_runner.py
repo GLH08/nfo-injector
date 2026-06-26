@@ -34,3 +34,13 @@ def test_conversion_audio():
 def test_conversion_empty():
     d = _mi_to_ffprobe_dict('{"media":{"track":[]}}')
     assert d == {"streams": [], "format": {}}
+
+
+def test_converted_dict_yields_healthy_nfo(tmp_path):
+    from backend.nfo_handler import inject_mediainfo, analyze_nfo, NfoStatus
+    nfo = tmp_path / "A.nfo"
+    nfo.write_text("<movie></movie>", encoding="utf-8")
+    data = _mi_to_ffprobe_dict(MI_JSON)
+    inject_mediainfo(nfo, data, force=True)
+    detail = analyze_nfo(nfo)
+    assert detail.status == NfoStatus.HEALTHY, f"missing: {detail.missing_fields}"
