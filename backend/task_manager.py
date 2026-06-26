@@ -27,6 +27,9 @@ from backend.nfo_handler import (
     NfoStatus, analyze_nfo, find_nfo_for_strm, inject_mediainfo, inject_mock_mediainfo_to_nfo
 )
 from backend.ffprobe_runner import probe_with_retry
+from backend import mediainfo_runner
+from backend.media_index import media_index
+from backend.openlist_resolver import resolve as resolve_openlist_url
 from backend import file_browser as fb
 from backend.file_browser import entries_from_cache, update_file_cache_entry
 
@@ -497,8 +500,6 @@ class TaskManager:
             self._emit_progress(task)
             return
 
-        media_base = resolve_media_path(strm_path, config)
-
         def log_cb(msg: str):
             self._log(task, "info", f"   {msg}")
 
@@ -521,29 +522,50 @@ class TaskManager:
             self._emit_progress(task)
             return
 
-        if media_base is None:
-            self._log(task, "error", "   ✗ 该路径不属于任何库")
-            task.progress.processed += 1
-            task.progress.failed += 1
-            task.progress.err_other += 1
-            self._emit_progress(task)
-            return
-
-        # ── 正常 FFprobe（在线程池中执行）────────────────────────
-        loop = asyncio.get_event_loop()
-        probe_result = await loop.run_in_executor(
-            self._executor,
-            lambda: probe_with_retry(
-                base_path=media_base,
-                extensions=config.guess_extensions,
-                timeout=task.timeout,
-                max_retries=config.max_retries,
-                retry_delay=config.retry_delay,
-                forbidden_retry_delay=config.forbidden_retry_delay,
-                log_callback=log_cb,
-                stop_event=task._stop_thread,
+        # ── 探测引擎分流：lib 有 media_url_root 走 mediainfo，否则 ffprobe ──
+        lib = resolve_library(strm_path, config)
+        if lib and lib.media_url_root:
+            try:
+                strm_rel = strm_path.relative_to(Path(lib.strm_path)).as_posix()
+            except ValueError:
+                strm_rel = strm_path.name
+            media_name = media_index.get(lib.id, strm_rel)
+            if not media_name:
+                self._log(task, "error", "   ✗ 媒体索引未找到该 STRM 的媒体文件名（请右键目录刷新媒体文件名索引）")
+                task.progress.processed += 1
+                task.progress.failed += 1
+                task.progress.err_not_found += 1
+                self._emit_progress(task)
+                return
+            url = resolve_openlist_url(lib.media_url_root, strm_rel, media_name)
+            loop = asyncio.get_event_loop()
+            probe_result = await loop.run_in_executor(
+                self._executor,
+                lambda: mediainfo_runner.probe(url, task.timeout, task._stop_thread, log_cb)
             )
-        )
+        else:
+            media_base = resolve_media_path(strm_path, config)
+            if media_base is None:
+                self._log(task, "error", "   ✗ 该路径不属于任何库")
+                task.progress.processed += 1
+                task.progress.failed += 1
+                task.progress.err_other += 1
+                self._emit_progress(task)
+                return
+            loop = asyncio.get_event_loop()
+            probe_result = await loop.run_in_executor(
+                self._executor,
+                lambda: probe_with_retry(
+                    base_path=media_base,
+                    extensions=config.guess_extensions,
+                    timeout=task.timeout,
+                    max_retries=config.max_retries,
+                    retry_delay=config.retry_delay,
+                    forbidden_retry_delay=config.forbidden_retry_delay,
+                    log_callback=log_cb,
+                    stop_event=task._stop_thread,
+                )
+            )
 
         # 处理 FFprobe 结果
         if probe_result.error_type == "cancelled":
