@@ -3,7 +3,7 @@ FROM python:3.12-slim
 
 # 安装 ffmpeg（含 ffprobe）
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg mediainfo && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
