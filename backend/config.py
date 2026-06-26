@@ -23,6 +23,7 @@ class Library(BaseModel):
     strm_path: str = Field(default="", description="STRM 目录绝对路径（容器内）")
     media_path: str = Field(default="", description="媒体目录绝对路径（容器内）")
     enabled: bool = Field(default=True, description="是否启用")
+    media_url_root: str = Field(default="", description="OpenList HTTP 根（如 https://openlist.novaw.de/d/115/Media）；空则走 ffprobe")
 
 
 class AppConfig(BaseModel):

@@ -31,3 +31,9 @@ def test_old_fields_removed():
 def test_scan_cache_ttl_default():
     c = AppConfig()
     assert c.scan_cache_ttl == 600
+
+
+def test_library_media_url_root_default_empty():
+    from backend.config import Library
+    l = Library(id="x", name="n", strm_path="/s", media_path="/m")
+    assert l.media_url_root == ""
