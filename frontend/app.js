@@ -158,6 +158,47 @@ async function init() {
 let treeData = {};   // 缓存已加载的目录内容 path → entries
 let scanCache = {};  // 目录状态统计缓存 path → counts
 
+// ─── scan 请求调度器：去重 + 并发限制，避免展开深层目录时几百个 /api/scan 并发打爆后端 ──
+const MAX_SCAN_CONCURRENCY = 2;
+const _scanInflight = new Map();   // path → Promise（去重：相同 path 复用同一 Promise）
+const _scanQueue = [];             // 待执行的 { path, resolver } 队列
+let _scanActive = 0;               // 当前真正在飞的请求数
+
+function _drainScanQueue() {
+  while (_scanQueue.length && _scanActive < MAX_SCAN_CONCURRENCY) {
+    const { path, resolver } = _scanQueue.shift();
+    _scanActive++;
+    _runScan(path).then(c => {
+      resolver(c);
+    }).finally(() => {
+      _scanActive--;
+      _scanInflight.delete(path);
+      _drainScanQueue();
+    });
+  }
+}
+
+async function _runScan(path) {
+  try {
+    const counts = await GET(`/api/scan?path=${encodeURIComponent(path)}`);
+    scanCache[path] = counts;
+    return counts;
+  } catch (e) { return null; }
+}
+
+/** 调度一次 scan（去重 + 限流）。返回 Promise<counts|null>。 */
+function scheduleScan(path) {
+  if (scanCache[path]) return Promise.resolve(scanCache[path]);
+  const existing = _scanInflight.get(path);
+  if (existing) return existing;
+  let resolver;
+  const promise = new Promise(r => { resolver = r; });
+  _scanInflight.set(path, promise);
+  _scanQueue.push({ path, resolver });
+  _drainScanQueue();
+  return promise;
+}
+
 async function loadTreeRoot() {
   const container = $('treeContainer');
   container.innerHTML = '<div class="loading-placeholder"><div class="spinner"></div><span>加载目录树…</span></div>';
@@ -206,7 +247,7 @@ function renderTreeLevel(container, entries, depth, parentPath) {
       name.textContent = entry.name;
       item.appendChild(name);
 
-      // 目录徽章（懒加载）
+      // 目录徽章（视口可见时才加载，避免一次展开几百个目录并发 scan）
       const badge = document.createElement('span');
       badge.className = 'tree-dir-badge';
       badge.dataset.dirPath = entry.relative_path;
@@ -216,10 +257,13 @@ function renderTreeLevel(container, entries, depth, parentPath) {
       const children = document.createElement('div');
       children.className = 'tree-children collapsed';
       children.dataset.loaded = 'false';
+      children.dataset.depth = String(depth + 1);
 
-      // 初始加载该目录的统计徽章 (only for non-library directories)
+      // 仅非库目录、且尚无缓存时，等徽章进入视口再加载统计
       if (entry.entry_type !== 'library' && !scanCache[entry.relative_path]) {
-        loadDirStats(entry.relative_path, badge);
+        observeDirBadge(badge, entry.relative_path);
+      } else if (scanCache[entry.relative_path]) {
+        renderDirBadge(badge, scanCache[entry.relative_path]);
       }
 
       // 点击展开
@@ -311,21 +355,72 @@ async function loadTreeChildren(container, dirPath, depth) {
   }
 }
 
+/** 注入完成后重载指定目录的可见子节点（就地重绘，刷新圆点/索引徽章）。幂等。 */
+async function reloadDirChildren(dirPath) {
+  if (!dirPath) return;
+  const node = document.querySelector(`.tree-node[data-path="${cssEscape(dirPath)}"]`);
+  if (!node) return;
+  const children = node.querySelector(':scope > .tree-children');
+  if (!children) return;
+  // 只重载已展开的目录；折叠的不打扰
+  if (children.classList.contains('collapsed')) return;
+  // depth = 该 children 内子节点的缩进层级，从 dataset 拿不到则用 0
+  const depth = parseInt(children.dataset.depth || '0', 10);
+  // 清缓存强制后端重读（_FILE_CACHE 已被注入流程翻新，browse 会拿到新状态）
+  delete treeData[dirPath];
+  await loadTreeChildren(children, dirPath, depth);
+}
+
+/** CSS 选择器转义：路径含括号/特殊字符时安全定位节点。 */
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
+// 目录徽章 IntersectionObserver：进入视口才加载统计，离开不再重复
+const _dirBadgeObserver = ('IntersectionObserver' in window) ? new IntersectionObserver((entries, obs) => {
+  entries.forEach(ent => {
+    if (ent.isIntersecting) {
+      const el = ent.target;
+      obs.unobserve(el);
+      loadDirStats(el.dataset.dirPath, el);
+    }
+  });
+}, { root: null, rootMargin: '200px' }) : null;
+
+function observeDirBadge(badgeEl, dirPath) {
+  if (_dirBadgeObserver) {
+    _dirBadgeObserver.observe(badgeEl);
+  } else {
+    // 无 IntersectionObserver 支持时退化为直接加载（限流仍在）
+    loadDirStats(dirPath, badgeEl);
+  }
+}
+
 async function loadDirStats(dirPath, badgeEl) {
   if (scanCache[dirPath]) {
     renderDirBadge(badgeEl, scanCache[dirPath]);
     return;
   }
-  try {
-    const counts = await GET(`/api/scan?path=${encodeURIComponent(dirPath)}`);
-    scanCache[dirPath] = counts;
-    renderDirBadge(badgeEl, counts);
-  } catch (e) { /* 静默失败 */ }
+  const counts = await scheduleScan(dirPath);
+  if (counts) renderDirBadge(badgeEl, counts);
 }
 
 function renderDirBadge(el, counts) {
   if (!counts || counts.total === 0) { el.textContent = ''; return; }
+  // 索引覆盖度徽章：全已索引✓、部分未索引⚠、全未索引○
+  let idxHtml = '';
+  if (counts.indexed !== undefined && counts.unindexed !== undefined) {
+    if (counts.unindexed === 0) {
+      idxHtml = `<span class="b-idx all" title="媒体索引：全部已索引(${counts.indexed})">🔗</span>`;
+    } else if (counts.indexed === 0) {
+      idxHtml = `<span class="b-idx none" title="媒体索引：全部未索引(${counts.unindexed})">⛓</span>`;
+    } else {
+      idxHtml = `<span class="b-idx partial" title="媒体索引：已索引 ${counts.indexed} / 未索引 ${counts.unindexed}">🔗⚠</span>`;
+    }
+  }
   el.innerHTML = `
+    ${idxHtml}
     ${counts.healthy  ? `<span class="b-h" title="健康">${counts.healthy}✓</span>` : ''}
     ${counts.partial  ? `<span class="b-p" title="不完整">${counts.partial}⚠</span>` : ''}
     ${counts.empty    ? `<span class="b-e" title="空白">${counts.empty}✕</span>` : ''}
@@ -993,9 +1088,14 @@ function watchTask(taskId) {
     } else if (msg.type === 'done') {
       appendLog('info', `── 任务 ${taskId.slice(0, 8)} 已结束 ──`, new Date().toISOString());
       ws.close();
-      // 刷新文件详情
-      if (currentFile) setTimeout(() => selectFile(currentFile), 800);
-      // 刷新全局统计
+      // 重载注入目标目录的可见子节点（刷新圆点/索引徽章）+ 文件详情 + 全局统计
+      // 单文件注入 → currentFile 所在目录优先；目录注入（currentFile 无关）→ currentDirCtx
+      const fileParent = currentFile ? currentFile.split('/').slice(0, -1).join('/') : '';
+      const reloadDir = fileParent || currentDirCtx;
+      setTimeout(() => {
+        if (reloadDir) reloadDirChildren(reloadDir).catch(() => {});
+        if (currentFile) selectFile(currentFile);
+      }, 800);
       setTimeout(() => refreshGlobalStats(), 1000);
     }
   };

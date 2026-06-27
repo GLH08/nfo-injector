@@ -32,8 +32,10 @@ class StatusCount:
     empty: int = 0
     missing: int = 0
     total: int = 0
+    indexed: int = 0      # 子树内已索引媒体文件名的 STRM 数
+    unindexed: int = 0   # 子树内未索引的 STRM 数
 
-    def add(self, status: NfoStatus):
+    def add(self, status: NfoStatus, indexed: Optional[bool] = None):
         self.total += 1
         if status == NfoStatus.HEALTHY:
             self.healthy += 1
@@ -43,6 +45,10 @@ class StatusCount:
             self.empty += 1
         elif status == NfoStatus.MISSING:
             self.missing += 1
+        if indexed is True:
+            self.indexed += 1
+        elif indexed is False:
+            self.unindexed += 1
 
     def merge(self, other: "StatusCount"):
         self.healthy += other.healthy
@@ -50,6 +56,8 @@ class StatusCount:
         self.empty += other.empty
         self.missing += other.missing
         self.total += other.total
+        self.indexed += other.indexed
+        self.unindexed += other.unindexed
 
     def to_dict(self) -> Dict:
         return {
@@ -58,6 +66,8 @@ class StatusCount:
             "empty": self.empty,
             "missing": self.missing,
             "total": self.total,
+            "indexed": self.indexed,
+            "unindexed": self.unindexed,
         }
 
     @property
@@ -130,10 +140,14 @@ def scan_and_cache(
     """
     递归扫描 abs_dir 子树，读取每个 .strm 的 NFO 状态，写入 _FILE_CACHE，
     更新 _SCANNED_SUBTREES[subtree_key]，清理该子树下已不存在的旧条目，返回计数。
+    顺带查 media_index 统计索引覆盖度（indexed/unindexed）。
     """
     if exclude_dirs is None:
         exclude_dirs = ["trailers", "extrafanart"]
     exclude_lower = {d.lower() for d in exclude_dirs}
+
+    # 延迟 import 避免与 media_index 的循环依赖
+    from backend.media_index import media_index
 
     counts = StatusCount()
     if not abs_dir.exists():
@@ -151,7 +165,9 @@ def scan_and_cache(
             strm_path = Path(root) / fname
             nfo_path = find_nfo_for_strm(strm_path)
             detail = analyze_nfo(nfo_path)
-            counts.add(detail.status)
+            rel = strm_path.relative_to(lib_strm_path).as_posix()
+            is_indexed = media_index.get(lib_id, rel) is not None
+            counts.add(detail.status, is_indexed)
             key = _cache_key(lib_id, strm_path, lib_strm_path)
             seen_keys.add(key)
             with _LOCK:
@@ -191,7 +207,7 @@ def _find_ancestor_subtree(subtree_key: str, ttl: float) -> Optional[str]:
     return max(candidates, key=len)
 
 
-def counts_from_cache(subtree_key: str, ttl: float) -> Optional[StatusCount]:
+def counts_from_cache(subtree_key: str, ttl: float, lib_id: Optional[str] = None) -> Optional[StatusCount]:
     ancestor = _find_ancestor_subtree(subtree_key, ttl)
     if ancestor is None:
         return None
@@ -202,8 +218,16 @@ def counts_from_cache(subtree_key: str, ttl: float) -> Optional[StatusCount]:
             (k, e) for k, e in _FILE_CACHE.items()
             if k == subtree_key or k.startswith(prefix)
         ]
+    # 延迟 import 避免循环依赖；lib_id 给定时顺带统计索引覆盖度
+    if lib_id:
+        from backend.media_index import media_index
     for k, e in snapshot:
-        counts.add(e.status)
+        is_indexed = None
+        if lib_id:
+            # k 形如 "<lib_id>/<库内相对路径>"，去 lib_id 前缀
+            rel = k.split("/", 1)[1] if "/" in k else k
+            is_indexed = media_index.get(lib_id, rel) is not None
+        counts.add(e.status, is_indexed)
     return counts
 
 

@@ -189,7 +189,7 @@ async def scan(path: str = "", force: bool = False):
         for lib in config.libraries:
             if not lib.enabled:
                 continue
-            cached = file_browser.counts_from_cache(lib.id, ttl) if (ttl > 0 and not force) else None
+            cached = file_browser.counts_from_cache(lib.id, ttl, lib.id) if (ttl > 0 and not force) else None
             if cached is not None:
                 total.merge(cached)
             else:
@@ -206,7 +206,7 @@ async def scan(path: str = "", force: bool = False):
         raise HTTPException(404, str(e))
 
     subtree_key = path  # path 已是 "<lib_id>" 或 "<lib_id>/..." 形式
-    cached = file_browser.counts_from_cache(subtree_key, ttl) if (ttl > 0 and not force) else None
+    cached = file_browser.counts_from_cache(subtree_key, ttl, lib.id) if (ttl > 0 and not force) else None
     if cached is not None:
         return {"path": path, **cached.to_dict()}
     counts = await loop.run_in_executor(

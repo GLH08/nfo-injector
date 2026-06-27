@@ -358,6 +358,9 @@ html, body {
 .tree-dir-badge .b-p { color: var(--color-partial); }
 .tree-dir-badge .b-e { color: var(--color-empty); }
 .tree-dir-badge .b-m { color: var(--color-missing); }
+.tree-dir-badge .b-idx.all { color: var(--color-healthy); }
+.tree-dir-badge .b-idx.partial { color: var(--color-partial); }
+.tree-dir-badge .b-idx.none { color: var(--text-muted); opacity: 0.5; }
 
 .tree-children { overflow: hidden; }
 .tree-children.collapsed { display: none; }

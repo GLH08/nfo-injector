@@ -132,6 +132,22 @@ def test_scan_force_bypasses_cache(tmp_path):
     assert counts["empty"] == 0
 
 
+def test_scan_returns_indexed_counts(tmp_path, monkeypatch):
+    """/api/scan 响应含 indexed/unindexed 覆盖度统计。"""
+    import backend.media_index as mi
+    _setup(tmp_path)  # 1 个 STRM (A.strm)
+    fb.clear_scan_cache()
+    # mock media_index.get：A.strm 已索引
+    monkeypatch.setattr(mi.media_index, "get", lambda lib_id, rel: "A.mp4" if rel.endswith("A.strm") else None)
+
+    client = TestClient(app)
+    r = client.get("/api/scan?path=lib1")
+    counts = r.json()
+    assert counts["total"] == 1
+    assert counts["indexed"] == 1
+    assert counts["unindexed"] == 0
+
+
 def _setup_with_media(tmp_path):
     """STRM 与媒体同目录（media_path 指向 STRM 根的父，使同目录匹配）。"""
     root = tmp_path / "Emby"

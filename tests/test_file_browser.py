@@ -72,3 +72,45 @@ def test_browse_uses_scan_cache_skips_reread(tmp_path, monkeypatch):
     assert strm.nfo_status == "EMPTY"
     assert calls["n"] == 0, f"browse 不应再读 NFO，但 analyze_nfo 被调用了 {calls['n']} 次"
 
+
+def test_scan_and_cache_counts_indexed(tmp_path, monkeypatch):
+    """scan_and_cache 顺带数索引覆盖度：A 已索引、B 未索引。"""
+    from backend.file_browser import scan_and_cache, clear_scan_cache
+    from backend import media_index as mi
+
+    clear_scan_cache()
+    root = _make_lib(tmp_path)
+
+    # mock media_index.get：只有 A.strm 命中
+    def fake_get(lib_id, rel):
+        return "A.mp4" if rel.endswith("A.strm") else None
+    monkeypatch.setattr(mi.media_index, "get", fake_get)
+
+    counts = scan_and_cache(root / "Movie", "lib1", root, ["trailers"])
+    assert counts.total == 2
+    assert counts.indexed == 1
+    assert counts.unindexed == 1
+
+
+def test_counts_from_cache_includes_indexed(tmp_path, monkeypatch):
+    """缓存命中后聚合统计应含索引覆盖度。"""
+    from backend.file_browser import scan_and_cache, clear_scan_cache, counts_from_cache
+    from backend import media_index as mi
+
+    clear_scan_cache()
+    root = _make_lib(tmp_path)
+
+    def fake_get(lib_id, rel):
+        return "A.mp4" if rel.endswith("A.strm") else None
+    monkeypatch.setattr(mi.media_index, "get", fake_get)
+
+    # 先扫描落缓存
+    scan_and_cache(root / "Movie", "lib1", root, ["trailers"])
+    # 缓存聚合（不传 lib_id 时无索引统计）
+    c_no_lib = counts_from_cache("lib1/Movie", 600)
+    assert c_no_lib.indexed == 0 and c_no_lib.unindexed == 0
+    # 传 lib_id 时含索引统计
+    c_with_lib = counts_from_cache("lib1/Movie", 600, "lib1")
+    assert c_with_lib.indexed == 1
+    assert c_with_lib.unindexed == 1
+
