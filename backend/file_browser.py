@@ -219,6 +219,19 @@ def entries_from_cache(subtree_key: str, ttl: float) -> Optional[List[ScanEntry]
     return snapshot
 
 
+def file_status_from_cache(cache_key: str, ttl: float) -> Optional[ScanEntry]:
+    """若该文件所在子树在 TTL 内被扫过，返回缓存的 ScanEntry，否则 None。
+
+    cache_key 形如 "<lib_id>/<库内相对路径>"（文件级）。避免 Browse 阶段重复读 FUSE NFO。
+    """
+    if ttl <= 0:
+        return None
+    if _find_ancestor_subtree(cache_key, ttl) is None:
+        return None
+    with _LOCK:
+        return _FILE_CACHE.get(cache_key)
+
+
 def update_file_cache_entry(
     lib_id: str,
     strm_abs: Path,
@@ -242,10 +255,14 @@ def browse_directory(
     lib_id: str,
     lib_strm_path: Path,
     exclude_dirs: Optional[List[str]] = None,
+    ttl: float = 0,
 ) -> List[BrowseEntry]:
     """
     浏览库内某绝对目录，返回当前层级条目。
     relative_path 一律拼成 "<lib_id>/<库内相对路径>"。
+
+    ttl > 0 时，STRM 文件的 NFO 状态优先取扫描缓存（file_status_from_cache），
+    命中则跳过 read FUSE；未命中才 analyze_nfo。目录结构始终 iterdir 实时列出。
     """
     if exclude_dirs is None:
         exclude_dirs = ["trailers", "extrafanart"]
@@ -273,8 +290,13 @@ def browse_directory(
                 has_children=_has_strm_children(item, exclude_lower),
             ))
         elif item.suffix.lower() == ".strm":
-            nfo_path = find_nfo_for_strm(item)
-            detail = analyze_nfo(nfo_path)
+            cached = file_status_from_cache(rel_posix, ttl) if ttl > 0 else None
+            if cached is not None:
+                detail = cached.detail
+                nfo_path = cached.nfo_path
+            else:
+                nfo_path = find_nfo_for_strm(item)
+                detail = analyze_nfo(nfo_path)
             entries.append(BrowseEntry(
                 name=item.name,
                 relative_path=rel_posix,

@@ -146,6 +146,7 @@ async def browse(path: str = ""):
         lib.id,
         Path(lib.strm_path),
         config.exclude_dirs,
+        config.scan_cache_ttl,
     )
 
     result = []
