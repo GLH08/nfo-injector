@@ -78,6 +78,7 @@ class BrowseEntry:
     nfo_status_label: Optional[str] = None
     nfo_status_color: Optional[str] = None
     missing_fields: Optional[List[str]] = None
+    indexed: Optional[bool] = None  # 是否在媒体索引里（media_index 有该 STRM 的媒体文件名）
 
     # 仅目录有效（浅层统计，非递归）
     child_count: int = 0

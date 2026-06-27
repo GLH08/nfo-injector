@@ -54,6 +54,26 @@ def test_browse_unknown_lib_404(tmp_path):
     assert r.status_code == 404
 
 
+def test_browse_strm_shows_indexed_flag(tmp_path, monkeypatch):
+    """browse 的 STRM 条目带 indexed 字段：在 media_index 里的为 true，否则 false。"""
+    import backend.media_index as mi_mod
+    from backend.media_index import media_index
+    f = tmp_path / "media_index.json"
+    monkeypatch.setattr(mi_mod, "_INDEX_FILE", f)
+    strm_root = _setup_with_media(tmp_path)  # A.strm + A.mp4
+    media_index._data = None
+    media_index.load()
+    # 只索引 A（另一个 B.strm 无媒体 → 不在索引里）
+    media_index.refresh_index("lib1", strm_root, ["trailers"], [".mp4", ".mkv"],
+                             subdir_relative="Movie/A")
+
+    client = TestClient(app)
+    r = client.get("/api/browse?path=lib1/Movie/A")
+    strm = [e for e in r.json()["entries"] if e["entry_type"] == "strm"][0]
+    assert strm["indexed"] is True
+
+
+
 def test_scan_uses_cache_on_second_call(tmp_path, monkeypatch):
     root = _setup(tmp_path)
     fb.clear_scan_cache()

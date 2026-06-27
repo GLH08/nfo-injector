@@ -150,8 +150,11 @@ async def browse(path: str = ""):
         config.scan_cache_ttl,
     )
 
+    media_index.load()
     result = []
     for e in entries:
+        # STRM relative_path 形如 "<lib_id>/<库内相对路径>"，去前缀后查 media_index
+        lib_rel = e.relative_path.split("/", 1)[1] if "/" in e.relative_path else e.relative_path
         d = {
             "name": e.name,
             "relative_path": e.relative_path,
@@ -165,6 +168,7 @@ async def browse(path: str = ""):
                 "nfo_status_label": e.nfo_status_label,
                 "nfo_status_color": e.nfo_status_color,
                 "missing_fields": e.missing_fields,
+                "indexed": media_index.get(lib.id, lib_rel) is not None,
             })
         result.append(d)
 

@@ -270,6 +270,13 @@ function renderTreeLevel(container, entries, depth, parentPath) {
       name.textContent = entry.name.replace(/\.strm$/i, '');
       item.appendChild(name);
 
+      // 媒体索引徽章：已索引绿，未索引灰
+      const idx = document.createElement('span');
+      idx.className = 'tree-index-badge' + (entry.indexed ? ' indexed' : '');
+      idx.textContent = entry.indexed ? '🔗' : '⬚';
+      idx.title = entry.indexed ? '已索引媒体文件名' : '未索引（右键目录刷新媒体文件名索引）';
+      item.appendChild(idx);
+
       // 状态点
       const dot = document.createElement('span');
       dot.className = 'tree-status-dot';

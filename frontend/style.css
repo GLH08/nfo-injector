@@ -333,6 +333,18 @@ html, body {
   margin-left: 2px;
 }
 
+.tree-index-badge {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-left: 6px;
+  opacity: 0.45;
+  line-height: 1;
+}
+.tree-index-badge.indexed {
+  opacity: 1;
+  color: #10b981;
+}
+
 .tree-dir-badge {
   display: inline-flex;
   align-items: center;
