@@ -140,6 +140,17 @@ def _get_range(url: str, start: int, end: int, timeout: int) -> Optional[bytes]:
         return None
 
 
+def _get_ftyp(url: str, timeout: int) -> bytes:
+    """按 declared size 下载完整 ftyp box。读不到/异常时返回空。"""
+    head8 = _get_range(url, 0, 7, timeout)
+    if not head8 or len(head8) < 8 or head8[4:8] != b"ftyp":
+        return b""
+    size = struct.unpack(">I", head8[:4])[0]
+    if size < 8 or size > 1024 * 1024:  # ftyp 通常很小，超 1MB 视为异常
+        return b""
+    return _get_range(url, 0, size - 1, timeout) or b""
+
+
 def _probe_moov_stitch(url: str, cl: int, timeout: int, log: Callable[[str], None]) -> Optional[dict]:
     """non-faststart mp4 兜底：定位文件尾的 moov box，下载完整 moov + 拼 ftyp 喂 mediainfo。
 
@@ -160,8 +171,10 @@ def _probe_moov_stitch(url: str, cl: int, timeout: int, log: Callable[[str], Non
     moov_bytes = _get_range(url, moov_off, moov_end, timeout)
     if not moov_bytes:
         return None
-    # 拼一个真 ftyp 头，让 mediainfo 把后续当 mp4 解析
-    ftyp_bytes = _get_range(url, 0, 31, timeout) or b""
+    # 拼一个真 ftyp 头（按其 declared size 下载完整 box，不能固定字节数——
+    # ftyp 长度因文件而异，多/少字节会让 moov 偏移错位 → mediainfo truncation）
+    ftyp_bytes = _get_ftyp(url, timeout)
+    stitched = Path(tempfile.mktemp(suffix=".mp4"))
     stitched = Path(tempfile.mktemp(suffix=".mp4"))
     try:
         stitched.write_bytes(ftyp_bytes + moov_bytes)

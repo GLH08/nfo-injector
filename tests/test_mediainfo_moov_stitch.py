@@ -16,8 +16,8 @@ def _build_nonfaststart_mp4() -> bytes:
 
     moov 放在文件尾，模拟 115 网盘 non-faststart 文件结构。
     """
-    # ftyp
-    ftyp = _box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2avc1mp41")
+    # ftyp（28 字节，模拟真实文件如 FWAY-008 的 ftyp，非默认 32）
+    ftyp = _box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2avc1mp4")
 
     # mdat：用一段填充模拟媒体数据；尺寸需使 moov 落在 HEAD_BYTES 尾段外
     # （头段 0..HEAD_BYTES-1 不含 moov，尾段含 moov box 头）
@@ -100,20 +100,26 @@ def test_probe_nonfaststart_moov_at_tail(monkeypatch):
     monkeypatch.setattr(mr.requests, "get", fake_get)
     monkeypatch.setattr(mr.requests, "head", fake_head)
 
-    # mock _run_mediainfo：仅当输入含完整 moov box 时返回有效 track
-    real_run = mr._run_mediainfo
-
+    # mock _run_mediainfo：校验拼接文件 box 结构合法——ftyp 按其 declared
+    # size 结束，紧接 moov box。生产 bug 是固定下 32 字节 ftyp，当真 ftyp≠32
+    # 时多/少字节导致 moov 偏移错位（mediainfo truncation）。
     def fake_run(path):
         data = open(path, "rb").read()
-        # 完整 moov box 存在（ftyp + 完整 moov）才返回 Video
-        if b"moov" in data and data.count(b"mvhd") >= 1 and data[:4] == struct.pack(">I", 32):
-            return json.loads(json.dumps({
-                "media": {"track": [
-                    {"@type": "General", "Duration": "100.0"},
-                    {"@type": "Video", "Format": "AVC", "Width": "1920",
-                     "Height": "1080", "FrameRate": "29.970"},
-                ]}}))
-        return None
+        if len(data) < 8:
+            return None
+        ftyp_size = struct.unpack(">I", data[:4])[0]
+        if data[4:8] != b"ftyp" or ftyp_size < 8 or ftyp_size > len(data):
+            return None
+        # ftyp 之后应紧跟 moov box（type 在 ftyp_size+4）
+        moov_type_off = ftyp_size + 4
+        if data[moov_type_off:moov_type_off + 4] != b"moov":
+            return None
+        return json.loads(json.dumps({
+            "media": {"track": [
+                {"@type": "General", "Duration": "100.0"},
+                {"@type": "Video", "Format": "AVC", "Width": "1920",
+                 "Height": "1080", "FrameRate": "29.970"},
+            ]}}))
 
     monkeypatch.setattr(mr, "_run_mediainfo", fake_run)
 
