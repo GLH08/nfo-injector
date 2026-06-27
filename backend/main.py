@@ -234,7 +234,8 @@ async def refresh_media_index(path: str = ""):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None, media_index.refresh_index,
-        lib.id, Path(lib.strm_path), config.exclude_dirs, config.guess_extensions, subdir
+        lib.id, Path(lib.strm_path), config.exclude_dirs, config.guess_extensions, subdir,
+        lib.media_path or None
     )
     return result
 

@@ -7,10 +7,21 @@ def _make(tmp_path):
     root = tmp_path / "Emby"
     (root / "Movie" / "A").mkdir(parents=True)
     (root / "Movie" / "A" / "A.strm").write_text("http://x", encoding="utf-8")
-    (root / "Movie" / "A" / "A.mp4").write_text("x", encoding="utf-8")  # 媒体
+    (root / "Movie" / "A" / "A.mp4").write_text("x", encoding="utf-8")  # 媒体（同目录）
     (root / "Movie" / "B").mkdir(parents=True)
     (root / "Movie" / "B" / "B.strm").write_text("http://y", encoding="utf-8")  # 无媒体
     return root
+
+
+def _make_split(tmp_path):
+    """STRM 与媒体分离在两个不同根目录（真实 CloudDrive2 布局）。"""
+    strm_root = tmp_path / "strm" / "Emby"
+    media_root = tmp_path / "media"
+    (strm_root / "Movie" / "A").mkdir(parents=True)
+    (media_root / "Movie" / "A").mkdir(parents=True)
+    (strm_root / "Movie" / "A" / "A.strm").write_text("http://x", encoding="utf-8")
+    (media_root / "Movie" / "A" / "A.mp4").write_text("x", encoding="utf-8")  # 媒体在另一根
+    return strm_root, media_root
 
 
 def _setup_index_file(tmp_path, monkeypatch):
@@ -47,3 +58,18 @@ def test_persistence_save_load(tmp_path, monkeypatch):
     media_index.load()
     assert media_index.get("lib1", "Movie/A/A.strm") == "A.mp4"
     assert (tmp_path / "media_index.json").exists()
+
+
+def test_refresh_with_split_strm_media_roots(tmp_path, monkeypatch):
+    """STRM 与媒体分离：媒体在 lib_media_path 下，不在 STRM 同目录。"""
+    _setup_index_file(tmp_path, monkeypatch)
+    strm_root, media_root = _make_split(tmp_path)
+    # 不传 lib_media_path（回退 STRM 同目录）→ 找不到媒体（STRM 目录无 mp4）
+    r1 = media_index.refresh_index("lib1", strm_root, [], [".mp4", ".mkv"])
+    assert r1["indexed"] == 0
+    assert media_index.get("lib1", "Movie/A/A.strm") is None
+    # 传 lib_media_path → 在媒体根对应子目录找到
+    r2 = media_index.refresh_index("lib1", strm_root, [], [".mp4", ".mkv"],
+                                   lib_media_path=str(media_root))
+    assert r2["indexed"] == 1
+    assert media_index.get("lib1", "Movie/A/A.strm") == "A.mp4"

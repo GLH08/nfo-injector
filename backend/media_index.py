@@ -49,20 +49,29 @@ class MediaIndex:
 
     def refresh_index(self, lib_id: str, lib_strm_path: Path,
                       exclude_dirs: List[str], guess_extensions: List[str],
-                      subdir_relative: str = "") -> Dict[str, int]:
+                      subdir_relative: str = "",
+                      lib_media_path: Optional[str] = None) -> Dict[str, int]:
         self.load()
         abs_base = Path(lib_strm_path)
         if subdir_relative:
             abs_base = abs_base / subdir_relative
         strm_files = get_strm_files_in_path(abs_base, exclude_dirs, recursive=True)
         lib_strm = Path(lib_strm_path)
+        media_root = Path(lib_media_path) if lib_media_path else None
         indexed = {}
         scanned = 0
         missing = 0
         for sf in strm_files:
             scanned += 1
             rel = sf.relative_to(lib_strm).as_posix()
-            name = self._match_media(sf, guess_extensions)
+            # 媒体目录：若库配了 media_path，媒体在 media_root/rel所在目录；
+            # 否则回退到 STRM 同目录
+            if media_root is not None:
+                rel_dir = sf.relative_to(lib_strm).parent.as_posix()
+                media_dir = media_root / rel_dir if rel_dir else media_root
+            else:
+                media_dir = sf.parent
+            name = self._match_media(sf.stem, media_dir, guess_extensions)
             if name:
                 indexed[rel] = name
             else:
@@ -81,17 +90,15 @@ class MediaIndex:
         return {"scanned": scanned, "indexed": len(indexed), "missing": missing}
 
     @staticmethod
-    def _match_media(strm_path: Path, guess_extensions: List[str]) -> Optional[str]:
-        parent = strm_path.parent
-        stem = strm_path.stem
+    def _match_media(stem: str, media_dir: Path, guess_extensions: List[str]) -> Optional[str]:
         # 1. 按扩展名猜
         for ext in guess_extensions:
-            p = parent / f"{stem}{ext}"
+            p = media_dir / f"{stem}{ext}"
             if p.exists():
                 return p.name
         # 2. 列目录
         try:
-            cands = [f for f in parent.iterdir()
+            cands = [f for f in media_dir.iterdir()
                      if f.is_file() and f.suffix.lower() in guess_extensions]
         except Exception:
             return None
