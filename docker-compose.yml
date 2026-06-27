@@ -8,9 +8,13 @@ services:
       - "18880:18880"
     volumes:
       # Single parent mount covering all STRM + Media sources
+      # FUSE 挂载（如 CloudDrive2）需 privileged 才能在容器内可见，
+      # 否则父目录 /apps 下的 FUSE 子挂载点不会透传。
       - /apps:/apps
       # Persist configuration and logs
       - ./data:/app/data
+    # 让 FUSE 文件系统在容器内可见（CloudDrive2 挂载的网盘媒体）
+    privileged: true
     environment:
       # Only for seeding initial library when config.json doesn't exist
       - STRM_ROOT=/apps/moviepilot/115strm/Emby
