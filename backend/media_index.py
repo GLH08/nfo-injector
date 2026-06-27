@@ -5,7 +5,7 @@ import json
 import re
 import threading
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Callable
 import logging
 
 from backend.file_browser import get_strm_files_in_path
@@ -50,17 +50,25 @@ class MediaIndex:
     def refresh_index(self, lib_id: str, lib_strm_path: Path,
                       exclude_dirs: List[str], guess_extensions: List[str],
                       subdir_relative: str = "",
-                      lib_media_path: Optional[str] = None) -> Dict[str, int]:
+                      lib_media_path: Optional[str] = None,
+                      on_progress: Optional[Callable[[Dict], None]] = None) -> Dict[str, int]:
         self.load()
         abs_base = Path(lib_strm_path)
         if subdir_relative:
             abs_base = abs_base / subdir_relative
         strm_files = get_strm_files_in_path(abs_base, exclude_dirs, recursive=True)
+        total = len(strm_files)
         lib_strm = Path(lib_strm_path)
         media_root = Path(lib_media_path) if lib_media_path else None
         indexed = {}
         scanned = 0
         missing = 0
+
+        def _report():
+            if on_progress:
+                on_progress({"total": total, "scanned": scanned,
+                             "indexed": len(indexed), "missing": missing})
+
         for sf in strm_files:
             scanned += 1
             rel = sf.relative_to(lib_strm).as_posix()
@@ -76,6 +84,7 @@ class MediaIndex:
                 indexed[rel] = name
             else:
                 missing += 1
+            _report()
         with self._lock:
             # 替换该 lib（或该子树）的条目
             if subdir_relative:

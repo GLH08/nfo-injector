@@ -26,7 +26,23 @@ function showToast(msg, type = 'info', duration = 3500) {
   t.className = `toast ${type}`;
   t.textContent = msg;
   toastContainer.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(20px)'; t.style.transition = '0.3s'; setTimeout(() => t.remove(), 300); }, duration);
+  if (duration > 0) {
+    setTimeout(() => _hideToast(t), duration);
+  }
+  return t;
+}
+
+function updateToast(el, msg, type) {
+  if (!el) return;
+  el.textContent = msg;
+  if (type) el.className = `toast ${type}`;
+}
+
+function _hideToast(t) {
+  t.style.opacity = '0';
+  t.style.transform = 'translateX(20px)';
+  t.style.transition = '0.3s';
+  setTimeout(() => t.remove(), 300);
 }
 
 // ─── API 封装 ───────────────────────────────────────────
@@ -686,12 +702,34 @@ async function scanContextDir() {
 async function refreshMediaIndex() {
   if (!currentDirCtx) return;
   hideContextMenu();
-  showToast(`正在刷新媒体文件名索引: ${currentDirCtx}…`, 'info', 2500);
+  const toastId = showToast(`正在刷新媒体文件名索引: ${currentDirCtx}…`, 'info', 0);
   try {
-    const res = await POST(`/api/media-index/refresh?path=${encodeURIComponent(currentDirCtx)}`);
-    showToast(`已刷新: 扫描 ${res.scanned} / 索引 ${res.indexed} / 未匹配 ${res.missing}`, 'success', 4000);
+    const start = await POST(`/api/media-index/refresh?path=${encodeURIComponent(currentDirCtx)}`);
+    const jobId = start.job_id;
+    // 轮询后台任务进度
+    let s;
+    for (let i = 0; i < 600; i++) {  // 最多约 10 分钟
+      await new Promise(r => setTimeout(r, 1000));
+      s = await GET(`/api/media-index/refresh/status?job_id=${jobId}`);
+      const p = s.progress || {};
+      const pct = p.total ? Math.round(p.scanned / p.total * 100) : 0;
+      updateToast(toastId, `刷新中… ${p.scanned}/${p.total || '?'} (${pct}%)`, 'info');
+      if (s.status === 'completed' || s.status === 'failed') break;
+    }
+    if (s.status === 'completed') {
+      const r = s.result || {};
+      updateToast(toastId, `已刷新: 扫描 ${r.scanned} / 索引 ${r.indexed} / 未匹配 ${r.missing}`, 'success');
+      setTimeout(() => _hideToast(toastId), 4000);
+    } else if (s.status === 'failed') {
+      updateToast(toastId, '刷新媒体索引失败: ' + (s.error || '未知错误'), 'error');
+      setTimeout(() => _hideToast(toastId), 4000);
+    } else {
+      updateToast(toastId, '刷新超时（仍在后台运行，稍后可重试查看）', 'warning');
+      setTimeout(() => _hideToast(toastId), 4000);
+    }
   } catch (e) {
-    showToast('刷新媒体索引失败: ' + e.message, 'error');
+    if (toastId) { updateToast(toastId, '刷新媒体索引失败: ' + e.message, 'error'); setTimeout(() => _hideToast(toastId), 4000); }
+    else showToast('刷新媒体索引失败: ' + e.message, 'error');
   }
 }
 

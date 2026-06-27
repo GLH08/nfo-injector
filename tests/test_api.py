@@ -110,3 +110,40 @@ def test_scan_force_bypasses_cache(tmp_path):
     counts = r3.json()
     assert counts["missing"] == 1
     assert counts["empty"] == 0
+
+
+def _setup_with_media(tmp_path):
+    """STRM 与媒体同目录（media_path 指向 STRM 根的父，使同目录匹配）。"""
+    root = tmp_path / "Emby"
+    (root / "Movie" / "A").mkdir(parents=True)
+    (root / "Movie" / "A" / "A.strm").write_text("http://x", encoding="utf-8")
+    (root / "Movie" / "A" / "A.mp4").write_text("x", encoding="utf-8")  # 媒体
+    config._config_cache = AppConfig(libraries=[
+        Library(id="lib1", name="主库", strm_path=str(root), media_path=str(root)),
+    ])
+    return root
+
+
+def test_media_index_refresh_runs_as_background_job(tmp_path, monkeypatch):
+    """刷新端点立即返回 job_id，后台完成可查状态。"""
+    import backend.media_index as mi_mod
+    from backend.media_index import media_index
+    f = tmp_path / "media_index.json"
+    monkeypatch.setattr(mi_mod, "_INDEX_FILE", f)
+    _setup_with_media(tmp_path)
+    media_index._data = None
+    media_index.load()
+
+    with TestClient(app) as client:
+        r = client.post("/api/media-index/refresh?path=lib1/Movie")
+        assert r.status_code == 200
+        job_id = r.json()["job_id"]
+        assert job_id
+        s = None
+        for _ in range(100):
+            s = client.get(f"/api/media-index/refresh/status?job_id={job_id}").json()
+            if s["status"] in ("completed", "failed"):
+                break
+        assert s["status"] == "completed", s
+        assert s["result"]["scanned"] == 1
+        assert s["result"]["indexed"] == 1

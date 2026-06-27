@@ -73,3 +73,20 @@ def test_refresh_with_split_strm_media_roots(tmp_path, monkeypatch):
                                    lib_media_path=str(media_root))
     assert r2["indexed"] == 1
     assert media_index.get("lib1", "Movie/A/A.strm") == "A.mp4"
+
+
+def test_refresh_progress_callback(tmp_path, monkeypatch):
+    """refresh_index 通过 on_progress 回调上报增量进度（scanned/indexed/missing/total）。"""
+    _setup_index_file(tmp_path, monkeypatch)
+    root = _make(tmp_path)
+    progress = []
+    r = media_index.refresh_index(
+        "lib1", root, ["trailers"], [".mp4", ".mkv"],
+        on_progress=lambda p: progress.append(dict(p)),
+    )
+    assert r["scanned"] == 2
+    # 至少上报了若干次，含 total 与 scanned 字段
+    assert progress, "应上报进度"
+    assert progress[0]["total"] == 2
+    assert progress[-1]["scanned"] == 2
+

@@ -10,8 +10,9 @@ FastAPI 主应用
 import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 # ─── 日志配置 ──────────────────────────────────────────────────
 # 确保 data 目录存在，设置文件日志
@@ -220,6 +221,11 @@ async def invalidate_scan_cache():
 
 # ─── 媒体索引 API ─────────────────────────────────────────────
 
+# 媒体索引刷新后台任务：避免大目录同步阻塞 → nginx 502
+_refresh_jobs: Dict[str, Dict] = {}
+_refresh_lock = asyncio.Lock()
+
+
 @app.post("/api/media-index/refresh")
 async def refresh_media_index(path: str = ""):
     config = get_config()
@@ -232,13 +238,52 @@ async def refresh_media_index(path: str = ""):
     # subdir_relative = path 去掉 lib_id/ 前缀
     parts = path.split("/", 1)
     subdir = parts[1] if len(parts) > 1 else ""
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "job_id": job_id,
+        "path": path,
+        "status": "running",
+        "progress": {"total": 0, "scanned": 0, "indexed": 0, "missing": 0},
+        "result": None,
+        "error": None,
+    }
+    async with _refresh_lock:
+        _refresh_jobs[job_id] = job
+
+    def _run():
+        def _on_progress(p):
+            job["progress"] = p
+        try:
+            res = media_index.refresh_index(
+                lib.id, Path(lib.strm_path), config.exclude_dirs,
+                config.guess_extensions, subdir,
+                lib.media_path or None, on_progress=_on_progress,
+            )
+            job["result"] = res
+            job["status"] = "completed"
+        except Exception as e:
+            logger.exception("media-index refresh fail")
+            job["error"] = str(e)
+            job["status"] = "failed"
+
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, media_index.refresh_index,
-        lib.id, Path(lib.strm_path), config.exclude_dirs, config.guess_extensions, subdir,
-        lib.media_path or None
-    )
-    return result
+    loop.run_in_executor(None, _run)
+    return {"job_id": job_id}
+
+
+@app.get("/api/media-index/refresh/status")
+async def refresh_media_index_status(job_id: str):
+    job = _refresh_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "任务不存在")
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "progress": job["progress"],
+        "result": job["result"],
+        "error": job["error"],
+    }
 
 
 @app.get("/api/media-index")
