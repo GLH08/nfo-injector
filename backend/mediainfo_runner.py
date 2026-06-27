@@ -3,6 +3,8 @@
 """mediainfo + HTTP Range 探测引擎：绕开 ffprobe 对 non-faststart mp4 的 FUSE 卡死。"""
 import json
 import logging
+import re
+import struct
 import subprocess
 import tempfile
 import threading
@@ -106,6 +108,75 @@ def _has_tracks(mi: dict) -> bool:
     return any(t.get("@type") in ("Video", "Audio") for t in tracks)
 
 
+def _locate_moov(tail: bytes, tail_start: int) -> Optional[tuple]:
+    """在尾段里扫描 'moov' box type，返回 (moov_box_file_offset, moov_size)。
+
+    moov box 起点含前 4 字节 size 字段，故 file_offset = tail_start + (match_pos - 4)。
+    """
+    for m in re.finditer(b"moov", tail):
+        pos = m.start()
+        if pos < 4:
+            continue
+        size = struct.unpack(">I", tail[pos - 4:pos])[0]
+        if size >= 8:
+            return (tail_start + pos - 4, size)
+    return None
+
+
+def _get_range(url: str, start: int, end: int, timeout: int) -> Optional[bytes]:
+    """下载 [start, end] 字节到内存，返回 bytes 或 None。"""
+    try:
+        r = requests.get(url, headers={"Range": f"bytes={start}-{end}"},
+                         timeout=timeout, stream=True, allow_redirects=True)
+        if r.status_code not in (200, 206):
+            return None
+        buf = bytearray()
+        for chunk in r.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                buf.extend(chunk)
+        return bytes(buf)
+    except Exception as e:
+        logger.warning(f"range download fail {url} {start}-{end}: {e}")
+        return None
+
+
+def _probe_moov_stitch(url: str, cl: int, timeout: int, log: Callable[[str], None]) -> Optional[dict]:
+    """non-faststart mp4 兜底：定位文件尾的 moov box，下载完整 moov + 拼 ftyp 喂 mediainfo。
+
+    返回有 track 的 mi dict 或 None。
+    """
+    if not cl or cl < HEAD_BYTES:
+        return None
+    tail_start = cl - HEAD_BYTES
+    tail = _get_range(url, tail_start, cl - 1, timeout)
+    if not tail:
+        return None
+    located = _locate_moov(tail, tail_start)
+    if not located:
+        return None
+    moov_off, moov_size = located
+    log(f"   头50MB无moov，定位moov box@{moov_off} size={moov_size}，精确下载…")
+    moov_end = min(moov_off + moov_size - 1, cl - 1)
+    moov_bytes = _get_range(url, moov_off, moov_end, timeout)
+    if not moov_bytes:
+        return None
+    # 拼一个真 ftyp 头，让 mediainfo 把后续当 mp4 解析
+    ftyp_bytes = _get_range(url, 0, 31, timeout) or b""
+    stitched = Path(tempfile.mktemp(suffix=".mp4"))
+    try:
+        stitched.write_bytes(ftyp_bytes + moov_bytes)
+        mi = _run_mediainfo(stitched)
+        if mi and _has_tracks(mi):
+            log("   ✓ mediainfo 解析成功(moov-stitch)")
+            return mi
+        return None
+    finally:
+        try:
+            stitched.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def probe(url: str, timeout: int, stop_event: Optional[threading.Event],
           log: Callable[[str], None]) -> ProbeResult:
     if stop_event and stop_event.is_set():
@@ -125,7 +196,7 @@ def probe(url: str, timeout: int, stop_event: Optional[threading.Event],
             log("   ✓ mediainfo 解析成功(头50MB)")
             return ProbeResult(success=True, data=data, tried_path=url, tried_extension=None,
                                error=None, error_type=None, raw_stderr=None)
-        # 2. 尾 50MB 兜底
+        # 2. 尾 50MB 兜底（仍可能缺失 moov box 前 4 字节 size，故失败再走 moov-stitch）
         cl = _content_length(url)
         if cl and cl > HEAD_BYTES:
             log("   头50MB无moov，尝试尾50MB...")
@@ -137,6 +208,12 @@ def probe(url: str, timeout: int, stop_event: Optional[threading.Event],
                     log("   ✓ mediainfo 解析成功(尾50MB)")
                     return ProbeResult(success=True, data=data, tried_path=url, tried_extension=None,
                                        error=None, error_type=None, raw_stderr=None)
+            # 3. moov-stitch 兜底：non-faststart mp4，moov 在文件尾且整框落在尾段内
+            mi = _probe_moov_stitch(url, cl, timeout, log)
+            if mi:
+                data = _mi_to_ffprobe_dict(json.dumps(mi))
+                return ProbeResult(success=True, data=data, tried_path=url, tried_extension=None,
+                                   error=None, error_type=None, raw_stderr=None)
         return ProbeResult(success=False, data=None, tried_path=url, tried_extension=None,
                            error="头尾50MB均无有效track", error_type="error", raw_stderr=None)
     finally:
