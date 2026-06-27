@@ -72,7 +72,8 @@ async function init() {
   try {
     config = await GET('/api/config');
     await loadTreeRoot();
-    await refreshGlobalStats();
+    // 全局统计耗时（全库递归扫描），不阻塞页面交互，后台异步填充顶栏
+    refreshGlobalStats().catch(e => console.error('全局统计失败', e));
     startTaskPolling();
   } catch (e) {
     showToast('连接后端失败: ' + e.message, 'error');
@@ -81,11 +82,11 @@ async function init() {
   // 事件绑定
   $('btnConfig').addEventListener('click', openConfigModal);
   $('btnRefreshRoot').addEventListener('click', async () => {
-    await refreshGlobalStats();
+    await refreshGlobalStats(true);
     showToast('统计已刷新', 'info', 2000);
   });
   $('btnCollapseAll').addEventListener('click', collapseAllTree);
-  $('btnScanAll').addEventListener('click', () => refreshGlobalStats());
+  $('btnScanAll').addEventListener('click', () => refreshGlobalStats(true));
   $('treeSearch').addEventListener('input', filterTree);
 
   $('btnProbeOnly').addEventListener('click', probeOnly);
@@ -326,16 +327,16 @@ function filterTree() {
   });
 }
 
-async function refreshGlobalStats() {
+async function refreshGlobalStats(force = false) {
   try {
-    // 先清服务端扫描缓存，强制全库重扫
-    await DEL('/api/scan-cache');
+    // 仅手动「刷新统计」时清服务端扫描缓存；进页面默认用已有缓存，避免每次全库重扫
+    if (force) await DEL('/api/scan-cache');
     const counts = await GET('/api/scan?path=');
     $('statHealthy').textContent = `${counts.healthy} ✅`;
     $('statPartial').textContent = `${counts.partial} ⚠️`;
-    $('statEmpty').textContent = `${counts.empty} 🔴`;
+    $('statEmpty').textContent = `${counts.empty} 🔘`;
     $('statMissing').textContent = `${counts.missing} ⚫`;
-    // 清除目录缓存
+    // 清除前端目录缓存
     scanCache = {};
   } catch (e) { /* 静默 */ }
 }
