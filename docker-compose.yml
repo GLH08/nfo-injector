@@ -7,13 +7,16 @@ services:
     ports:
       - "18880:18880"
     volumes:
-      # Single parent mount covering all STRM + Media sources
-      # FUSE 挂载（如 CloudDrive2）需 privileged 才能在容器内可见，
-      # 否则父目录 /apps 下的 FUSE 子挂载点不会透传。
-      - /apps:/apps
+      # Single parent mount covering all STRM + Media sources.
+      # FUSE（CloudDrive2 等）是 /apps 下的子挂载；仅 privileged 不够，
+      # 必须 bind propagation: rshared，容器内 exists()/iterdir() 才能看到网盘文件。
+      - type: bind
+        source: /apps
+        target: /apps
+        bind:
+          propagation: rshared
       # Persist configuration and logs
       - ./data:/app/data
-    # 让 FUSE 文件系统在容器内可见（CloudDrive2 挂载的网盘媒体）
     privileged: true
     environment:
       # Only for seeding initial library when config.json doesn't exist
